@@ -1,0 +1,55 @@
+name: Scheduled Latest Report
+
+on:
+  schedule:
+    # 5 PM PT during daylight time (UTC-7).
+    - cron: "0 0 * * 2-5"
+    # 5 PM PT during standard time (UTC-8).
+    - cron: "0 1 * * 2-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  generate-and-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate local schedule window (Mon-Thu 5 PM PT)
+        id: schedule_guard
+        run: |
+          local_dow="$(TZ=America/Los_Angeles date +%u)"
+          local_hm="$(TZ=America/Los_Angeles date +%H%M)"
+          if [ "${local_dow}" -ge 1 ] && [ "${local_dow}" -le 4 ] && [ "${local_hm}" = "1700" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Python
+        if: steps.schedule_guard.outputs.should_run == 'true' || github.event_name == 'workflow_dispatch'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate reports/latest.md
+        if: steps.schedule_guard.outputs.should_run == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          PYTHONPATH=src python scripts/generate_latest_report.py
+
+      - name: Create Pull Request
+        if: steps.schedule_guard.outputs.should_run == 'true' || github.event_name == 'workflow_dispatch'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore(report): update latest report"
+          branch: "codex/scheduled-latest-report"
+          delete-branch: true
+          title: "chore(report): update latest report"
+          body: |
+            Automated update for `reports/latest.md`.
+          add-paths: |
+            reports/latest.md
